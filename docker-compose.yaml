@@ -7,8 +7,3 @@ services:
     ports:
     - 5672:5672 # port for the daemon API, can be exposed to public.
     - 15672:15672 # port for the Management interface
-  kub:
-    container_name: 'kub'
-    build: './'
-    links:
-      - 'rabbitmq'

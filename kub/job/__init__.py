@@ -1,8 +1,7 @@
 import json
-import logging as log
 import threading
 import uuid
-
+from kub.log import log
 from kubernetes import watch
 
 
@@ -64,14 +63,14 @@ class JobExecutor:
     def callback(self, ch, method, properties, body):
         def execute_job():
             msg = deserialize_to_json(body)
-            log.debug("Received message : {}".format(msg))
+            log("Received message : {}".format(msg))
 
             name = "{}-{}".format(msg["name"], str(uuid.uuid4()))
             image = msg["image"]
             command = msg["command"]
             args = msg["args"]
 
-            log.info("{} Starting Job {}".format(name))
+            log("Starting Job {}".format(name))
             resp = self.__batch.create_namespaced_job(namespace="default",
                                                       body=self.__job_creator.create(name, image,
                                                                                      command, args, {}))
@@ -79,7 +78,7 @@ class JobExecutor:
             # FIXME : Check response, do something on error for both above and below calls
             self.__wait_for_job_completion(job_name=name)
 
-            log.debug("Acking ...")
+            log("Acking ...")
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
         t = threading.Thread(target=execute_job)
@@ -89,18 +88,18 @@ class JobExecutor:
         w = watch.Watch()
         kwargs = {"field_selector": "metadata.name={}".format(job_name), "_request_timeout": 600}
         for event in w.stream(self.__batch.list_namespaced_job, "default", **kwargs):
-            log.debug("Event: {} {}".format(event["type"], event["object"].metadata.name))
+            log("Event: {} {}".format(event["type"], event["object"].metadata.name))
             status = event["object"].status
 
             if status.succeeded is not None:
-                log.info("Job {} finished with status {}".format(job_name, status))
+                log("Job {} finished with status {}".format(job_name, status))
                 break
             if event["type"] == "DELETED":
-                log.error("ERROR: Job {} has been deleted!".format(job_name))
+                log("ERROR: Job {} has been deleted!".format(job_name))
                 break
 
             if status.failed == 1:
-                log.error("ERROR: Job {} has failed!\nCleaning up job.".format(job_name))
+                log("ERROR: Job {} has failed! Cleaning up job and associated pods.".format(job_name))
                 delete_options = self.__kube_client.V1DeleteOptions(propagation_policy="Foreground")
                 self.__batch.delete_namespaced_job(name=job_name, namespace="default",
                                                    body=delete_options)

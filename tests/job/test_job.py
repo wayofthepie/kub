@@ -1,9 +1,10 @@
+import json
 from unittest import TestCase
 from unittest.mock import Mock
 
 from kubernetes import client
 
-from kub.job import QueueConsumer, JobSpecCreator
+from kub.job import QueueConsumer, JobSpecCreator, JobExecutor
 
 
 class TestQueueConsumer(TestCase):
@@ -49,3 +50,55 @@ class TestJobSpecCreator(TestCase):
         self.assertEqual(container_spec.name, name)
         self.assertEqual(container_spec.image, image)
         self.assertEqual(container_spec.command, command)
+
+
+class TestJobExecutor(TestCase):
+    def test_execute_job_sync(self):
+        # Arrange
+        name = "test"
+        image = "alpine"
+        command = ["echo"]
+        args = ["hello"]
+        msg = '{{"name": "{}", "command": {}, "image": "{}", "args": {}}}'.format(name, json.dumps(command), image,
+                                                                                  json.dumps(args))
+        print(msg)
+        client = Mock()
+        batch = Mock()
+        batch.list_namespaced_job.return_value = MockResponse()
+        client.BatchV1Api.return_value = batch
+        channel = Mock()
+        creator = Mock()
+        exec = JobExecutor(client, creator)
+
+        # Act
+        exec.execute_job_sync(channel, MockMethod(), [], msg.encode())
+
+        # Assert
+        creator.create.assert_called_with(AnyStringWith(name), image, command, args, {})
+
+
+class MockResponse:
+    def release_conn(self):
+        pass
+
+    def read_chunked(self, decode_content):
+        return []
+
+    def close(self):
+        pass
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        pass
+
+
+class MockMethod:
+    def delivery_tag(self):
+        pass
+
+
+class AnyStringWith(str):
+    def __eq__(self, other):
+        return self in other

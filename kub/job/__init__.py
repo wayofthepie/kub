@@ -1,8 +1,10 @@
 import json
 import threading
 import uuid
-from kub.log import log
+
 from kubernetes import watch
+
+from kub.log import log
 
 
 class QueueConsumer:
@@ -55,34 +57,37 @@ class JobSpecCreator:
 
 
 class JobExecutor:
-    def __init__(self, kube_client):
+    def __init__(self, kube_client, job_creator):
         self.__kube_client = kube_client
-        self.__job_creator = JobSpecCreator(kube_client)
+        self.__job_creator = job_creator
         self.__batch = kube_client.BatchV1Api()
 
     def callback(self, ch, method, properties, body):
-        def execute_job():
-            msg = deserialize_to_json(body)
-            log("Received message : {}".format(msg))
+        def execute():
+            self.execute_job_sync(ch, method, properties, body)
 
-            name = "{}-{}".format(msg["name"], str(uuid.uuid4()))
-            image = msg["image"]
-            command = msg["command"]
-            args = msg["args"]
-
-            log("Starting Job {}".format(name))
-            resp = self.__batch.create_namespaced_job(namespace="default",
-                                                      body=self.__job_creator.create(name, image,
-                                                                                     command, args, {}))
-
-            # FIXME : Check response, do something on error for both above and below calls
-            self.__wait_for_job_completion(job_name=name)
-
-            log("Acking ...")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-
-        t = threading.Thread(target=execute_job)
+        t = threading.Thread(target=execute)
         t.start()
+
+    def execute_job_sync(self, ch, method, properties, body):
+        msg = deserialize_to_json(body)
+        log("Received message : {}".format(msg))
+
+        name = "{}-{}".format(msg["name"], str(uuid.uuid4()))
+        image = msg["image"]
+        command = msg["command"]
+        args = msg["args"]
+
+        log("Starting Job {}".format(name))
+        resp = self.__batch.create_namespaced_job(namespace="default",
+                                                  body=self.__job_creator.create(name, image,
+                                                                                 command, args, {}))
+
+        # FIXME : Check response, do something on error for both above and below calls
+        self.__wait_for_job_completion(job_name=name)
+
+        log("Acking ...")
+        ch.basic_ack(delivery_tag=method.delivery_tag)
 
     def __wait_for_job_completion(self, job_name):
         w = watch.Watch()
@@ -97,7 +102,6 @@ class JobExecutor:
             if event["type"] == "DELETED":
                 log("ERROR: Job {} has been deleted!".format(job_name))
                 break
-
             if status.failed == 1:
                 log("ERROR: Job {} has failed! Cleaning up job and associated pods.".format(job_name))
                 delete_options = self.__kube_client.V1DeleteOptions(propagation_policy="Foreground")

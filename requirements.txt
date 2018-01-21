@@ -1,3 +1,4 @@
 kubernetes
 pika
 mock
+pytest
